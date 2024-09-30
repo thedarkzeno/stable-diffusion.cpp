@@ -671,6 +671,8 @@ int main(int argc, const char* argv[]) {
     int n_prompts = 0;
 
     const auto txt2imgRequest = [&sd_ctx, &params, &n_prompts](const httplib::Request & req, httplib::Response & res) {
+        // Set CORS headers for the actual POST request
+        res.set_header("Access-Control-Allow-Origin", "*");
         try {
             // Parse the JSON body
             json request_json = json::parse(req.body);
@@ -697,15 +699,15 @@ int main(int argc, const char* argv[]) {
             if (request_json.contains("height")) {
                 params.height = request_json["height"].get<int>();
             }
-            if (request_json.contains("sample_method")) {
-                std::string sample_method_str = request_json["sample_method"].get<std::string>();
-                // for (int m = 0; m < N_SAMPLE_METHODS; m++) {
-                //     if (sample_method_str == sample_method_str[m]) {
-                //         params.sample_method = static_cast<sample_method_t>(m);
-                //         break;
-                //     }
-                // }
-            }
+            // if (request_json.contains("sample_method")) {
+            //     std::string sample_method_str = request_json["sample_method"].get<std::string>();
+            //     // for (int m = 0; m < N_SAMPLE_METHODS; m++) {
+            //     //     if (sample_method_str == sample_method_str[m]) {
+            //     //         params.sample_method = static_cast<sample_method_t>(m);
+            //     //         break;
+            //     //     }
+            //     // }
+            // }
             if (request_json.contains("sample_steps")) {
                 params.sample_steps = request_json["sample_steps"].get<int>();
             }
@@ -842,8 +844,9 @@ int main(int argc, const char* argv[]) {
     // CORS preflight
     svr->Options(R"(.*)", [](const httplib::Request &, httplib::Response & res) {
         // Access-Control-Allow-Origin is already set by middleware
+        res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Credentials", "true");
-        res.set_header("Access-Control-Allow-Methods",     "POST");
+        res.set_header("Access-Control-Allow-Methods",     "POST, OPTIONS");
         res.set_header("Access-Control-Allow-Headers",     "*");
         return res.set_content("", "text/html"); // blank response, no data
     });
