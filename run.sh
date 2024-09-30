@@ -1,0 +1,1 @@
+./build/bin/sd-server --diffusion-model  ./models/flux1-dev-q4_k.gguf --vae ./models/ae.safetensors --clip_l ./models/clip_l.safetensors --t5xxl ./models/t5xxl_fp16.safetensors  -p "a lovely cat holding a sign says 'flux.cpp'" --cfg-scale 1.0 --sampling-method euler -v  

@@ -10,6 +10,8 @@
 #include "flux.hpp"
 #include "stable-diffusion.h"
 
+#include "json.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #include "stb_image.h"
@@ -23,6 +25,8 @@
 #include "stb_image_resize.h"
 
 #include "httplib.h"
+
+using json = nlohmann::json;
 
 const char* rng_type_to_str[] = {
     "std_default",
@@ -82,8 +86,8 @@ struct SDParams {
     float guidance    = 3.5f;
     float style_ratio = 20.f;
     int clip_skip     = -1;  // <= 0 represents unspecified
-    int width         = 512;
-    int height        = 512;
+    int width         = 1024;
+    int height        = 1024;
     int batch_count   = 1;
 
 
@@ -183,6 +187,58 @@ void print_usage(int argc, const char* argv[]) {
     printf("  -v, --verbose                      print extra info\n");
     printf("  --port                             port used for server (default: 8080)\n");
     printf("  --host                             IP address used for server. Use 0.0.0.0 to expose server to LAN (default: localhost)\n");
+}
+
+// Simple Base64 encoding function
+static const std::string base64_chars =
+             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+             "abcdefghijklmnopqrstuvwxyz"
+             "0123456789+/";
+
+std::string base64_encode(unsigned char const* bytes_to_encode, unsigned int in_len) {
+    std::string ret;
+    int i = 0;
+    int j = 0;
+    unsigned char char_array_3[3];
+    unsigned char char_array_4[4];
+
+    while (in_len--) {
+        char_array_3[i++] = *(bytes_to_encode++);
+        if (i ==3) {
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + 
+                               ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + 
+                               ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for(i = 0; (i <4) ; i++)
+                ret += base64_chars[char_array_4[i]];
+            i = 0;
+        }
+    }
+
+    if (i)
+    {
+        for(j = i; j < 3; j++)
+            char_array_3[j] = '\0';
+
+        char_array_4[0] = ( char_array_3[0] & 0xfc ) >> 2;
+        char_array_4[1] = ((char_array_3[0] & 0x03) << 4 ) + 
+                           ((char_array_3[1] & 0xf0) >> 4);
+        char_array_4[2] = ((char_array_3[1] & 0x0f) << 2 ) + 
+                           ((char_array_3[2] & 0xc0) >> 6);
+        char_array_4[3] = char_array_3[2] & 0x3f;
+
+        for (j = 0; (j < i +1); j++)
+            ret += base64_chars[char_array_4[j]];
+
+        while((i++ <3))
+            ret += '=';
+
+    }
+
+    return ret;
 }
 
 void parse_args(int argc, const char** argv, SDParams& params) {
@@ -615,14 +671,73 @@ int main(int argc, const char* argv[]) {
     int n_prompts = 0;
 
     const auto txt2imgRequest = [&sd_ctx, &params, &n_prompts](const httplib::Request & req, httplib::Response & res) {
-        //TODO: proper payloads 
-        std::string prompt = req.body;
-        if(!prompt.empty()){
-            params.prompt = prompt;
-        }else{
-            params.seed+=1;
+        try {
+            // Parse the JSON body
+            json request_json = json::parse(req.body);
+
+            // Extract parameters from JSON
+            if (request_json.contains("prompt")) {
+                params.prompt = request_json["prompt"].get<std::string>();
+            }
+            if (request_json.contains("negative_prompt")) {
+                params.negative_prompt = request_json["negative_prompt"].get<std::string>();
+            }
+            if (request_json.contains("clip_skip")) {
+                params.clip_skip = request_json["clip_skip"].get<int>();
+            }
+            if (request_json.contains("cfg_scale")) {
+                params.cfg_scale = request_json["cfg_scale"].get<float>();
+            }
+            if (request_json.contains("guidance")) {
+                params.guidance = request_json["guidance"].get<float>();
+            }
+            if (request_json.contains("width")) {
+                params.width = request_json["width"].get<int>();
+            }
+            if (request_json.contains("height")) {
+                params.height = request_json["height"].get<int>();
+            }
+            if (request_json.contains("sample_method")) {
+                std::string sample_method_str = request_json["sample_method"].get<std::string>();
+                // for (int m = 0; m < N_SAMPLE_METHODS; m++) {
+                //     if (sample_method_str == sample_method_str[m]) {
+                //         params.sample_method = static_cast<sample_method_t>(m);
+                //         break;
+                //     }
+                // }
+            }
+            if (request_json.contains("sample_steps")) {
+                params.sample_steps = request_json["sample_steps"].get<int>();
+            }
+            if (request_json.contains("seed")) {
+                params.seed = request_json["seed"].get<int64_t>();
+            }
+            if (request_json.contains("batch_count")) {
+                params.batch_count = request_json["batch_count"].get<int>();
+            }
+            if (request_json.contains("style_ratio")) {
+                params.style_ratio = request_json["style_ratio"].get<float>();
+            }
+            if (request_json.contains("normalize_input")) {
+                params.normalize_input = request_json["normalize_input"].get<bool>();
+            }
+
+            printf("Parsed parameters: \n");
+            print_params(params);
+        } catch (const std::exception &e) {
+            res.status = 400; // Bad Request
+            res.set_content(std::string("Invalid JSON: ") + e.what(), "text/plain");
+            return 1;
         }
+        // std::string prompt = req.body;
+        // printf("PROMPT\n%s",prompt.c_str());
+        // if(!prompt.empty()){
+        //     params.prompt = prompt;
+        // }else{
+        //     params.seed+=1;
+        // }
         {
+            printf("txt2img with sizes %dx%d", params.width, params.height);
             sd_image_t* results;
             results = txt2img(sd_ctx,
                                 params.prompt.c_str(),
@@ -648,22 +763,74 @@ int main(int argc, const char* argv[]) {
                 return 1;
             }
 
-            size_t last            = params.output_path.find_last_of(".");
-            std::string dummy_name = last != std::string::npos ? params.output_path.substr(0, last) : params.output_path;
+            // size_t last            = params.output_path.find_last_of(".");
+            // std::string dummy_name = last != std::string::npos ? params.output_path.substr(0, last) : params.output_path;
+            
+            // for (int i = 0; i < params.batch_count; i++) {
+            //     if (results[i].data == NULL) {
+            //         continue;
+            //     }
+            //     std::string final_image_path = i > 0 ? dummy_name + "_" + std::to_string(i + 1 + n_prompts*params.batch_count) + ".png" : dummy_name + ".png";
+            //     stbi_write_png(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
+            //                 results[i].data, 0, get_image_params(params, params.seed + i).c_str());
+            //     printf("save result image to '%s'\n", final_image_path.c_str());
+            //     // Todo: return base64 encoded image via websocket?
+                
+
+            //     free(results[i].data);
+            //     results[i].data = NULL;
+            // }
+            // free(results);
+            // n_prompts++;
+             // Prepare JSON response
+            std::ostringstream json_response;
+            json_response << "{ \"images\": [";
+
             for (int i = 0; i < params.batch_count; i++) {
                 if (results[i].data == NULL) {
                     continue;
                 }
-                std::string final_image_path = i > 0 ? dummy_name + "_" + std::to_string(i + 1 + n_prompts*params.batch_count) + ".png" : dummy_name + ".png";
-                stbi_write_png(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
-                            results[i].data, 0, get_image_params(params, params.seed + i).c_str());
-                printf("save result image to '%s'\n", final_image_path.c_str());
-                // Todo: return base64 encoded image via websocket?
+
+                int png_size;
+                // Pass NULL as the 'parameters' argument
+                unsigned char *png_buffer = stbi_write_png_to_mem(
+                    results[i].data, 
+                    0, 
+                    results[i].width, 
+                    results[i].height, 
+                    results[i].channel, 
+                    &png_size, 
+                    NULL
+                );
+                if (png_buffer == NULL) {
+                    printf("Failed to encode image to PNG\n");
+                    res.status = 500;
+                    res.set_content("Failed to encode image.", "text/plain");
+                    return 1;
+                }
+
+                std::string encoded_image = base64_encode(png_buffer, png_size);
+                STBIW_FREE(png_buffer); // Free the PNG buffer after encoding
+
+                // Add image to JSON array
+                json_response << "\"data:image/png;base64," << encoded_image << "\"";
+
+                if (i != params.batch_count -1) {
+                    json_response << ", ";
+                }
+
                 free(results[i].data);
                 results[i].data = NULL;
             }
+
+            json_response << "] }";
+
             free(results);
             n_prompts++;
+
+            // Set response headers and body
+            res.set_content(json_response.str(), "application/json");
+            
         }
         return 0;
     };
